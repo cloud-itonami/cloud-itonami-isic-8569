@@ -1,0 +1,8 @@
+{:itonami.blueprint/id "cloud-itonami-8569"
+ :itonami.blueprint/name "Community Learning Support"
+ :itonami.blueprint/isic-rev5 "8569"
+ :itonami.blueprint/domain :education/support
+ :itonami.blueprint/license "AGPL-3.0-or-later"
+ :itonami.blueprint/social-impact [:learning-access :dropout-prevention :equity]
+ :itonami.blueprint/governor :learner-safety-governor
+ :itonami.blueprint/status :public-oss}
