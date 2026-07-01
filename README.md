@@ -7,6 +7,14 @@ This repository designs a forkable OSS business for learning support, tutoring
 operations, attendance follow-up, scholarship guidance and school-community
 case management.
 
+## Robotics premise
+
+All cloud-itonami verticals are designed on the premise that a **robot performs
+the physical domain work**. Here a learning-support robot performs content delivery, assessment proctoring and assistive interaction with learners under an actor that proposes
+actions and an independent **Learner Safety Governor** that gates them. The governor never
+dispatches hardware itself; `:high`/`:safety-critical` actions (such as
+operating near children or vulnerable learners) require human sign-off.
+
 ## Core Contract
 
 ```text
