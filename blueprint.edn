@@ -1,4 +1,4 @@
-{:itonami.blueprint/id "cloud-itonami-8569"
+{:itonami.blueprint/id "cloud-itonami-isic-8569"
  :itonami.blueprint/name "Community Learning Support"
  :itonami.blueprint/isic-rev5 "8569"
  :itonami.blueprint/domain :education/support
@@ -6,4 +6,7 @@
  :itonami.blueprint/social-impact [:learning-access :dropout-prevention :equity]
  :itonami.blueprint/governor :learner-safety-governor
  :itonami.blueprint/robotics true
- :itonami.blueprint/status :public-oss}
+ :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger]
+ :itonami.blueprint/optional-technologies [:optimization]
+ :itonami.blueprint/status :public-oss
+ :itonami.blueprint/maturity :implemented}
