@@ -162,7 +162,16 @@
   [{:keys [op subject]} st]
   (when (= op :actuation/finalize-support-plan)
     (let [l (store/learner st subject)]
-      (when (registry/learner-to-tutor-ratio-exceeds-maximum? l)
+      (cond
+        ;; The entity EXISTS but the figure it needs is missing or
+        ;; non-numeric, so the limit cannot be evaluated -- which is not
+        ;; the same as being within it. A missing entity is a different
+        ;; violation that another gate owns, so it is excluded here.
+        (and l (not (registry/learner-to-tutor-ratio-exceeds-maximum-checkable? l)))
+        [{:rule :learner-to-tutor-ratio-exceeds-maximum
+          :detail "上限判定に必要な値が記録されていない -- 限度内と断定できないため進めない"}]
+
+        (registry/learner-to-tutor-ratio-exceeds-maximum? l)
         [{:rule :learner-to-tutor-ratio-exceeds-maximum
           :detail (str subject " の担当コホート学習者数(" (:cohort-learner-count l)
                       ")/チューター数(" (:cohort-tutor-count l) ")が上限を超過")}]))))

@@ -73,6 +73,16 @@
   (and (number? cohort-learner-count) (number? cohort-tutor-count) (pos? cohort-tutor-count)
        (> (/ cohort-learner-count cohort-tutor-count) maximum-tutor-load-ratio)))
 
+(defn learner-to-tutor-ratio-exceeds-maximum-checkable?
+  "Are the figures `learner-to-tutor-ratio-exceeds-maximum?` needs actually recorded?
+
+  That predicate answers only `over` / `not over`, and its
+  `(and (number? ...) ...)` guard made an un-recorded figure fall
+  through as `not over`. A cohort with no recorded head counts read as within the ratio. Callers must ask this first:
+  un-checkable is not within limits."
+  [{:keys [cohort-learner-count cohort-tutor-count]}]
+  (boolean (and (number? cohort-learner-count) (number? cohort-tutor-count))))
+
 (defn register-support-plan
   "Validate + construct the SUPPORT-PLAN registration DRAFT -- the
   learning-support operator's own act of finalizing a real support
