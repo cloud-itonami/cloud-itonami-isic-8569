@@ -1,0 +1,538 @@
+(ns learning.render-html
+  "Build-time HTML renderer for `docs/samples/operator-console.html`.
+
+  Closes flagship checklist item 2 for this repo: `docs/samples/
+  operator-console.html` previously existed on `main` as a HAND-WRITTEN
+  file with NO generator behind it -- and it described a `robotics`
+  domain that this repo has never implemented (this is a community
+  learning-support actor, ISIC 85). It was not a stale render; it was
+  never rendered at all. This namespace replaces it with real output.
+
+  Everything on the page is driven through the REAL actor stack
+  (`learning.operation` -> `learning.governor` -> `learning.store`) via
+  langgraph `g/run*`, over this repo's own seeded learners
+  (`learning.store/demo-data`: learner-1..learner-4). No mock HTML, no
+  hand-typed rows, no invented identifiers -- every id, jurisdiction,
+  cohort head-count, plan number and hold reason on the page is read
+  back out of the store or the audit ledger after the run.
+
+  The scenario is adapted from this repo's own `learning.sim` demo
+  driver (`clojure -M:dev:run`, confirmed BEFORE this file was written
+  to produce a sensible ledger against the real seeded learner ids).
+
+  Deterministic: no clock, no randomness, no network, no timestamps in
+  the page body -- byte-identical across reruns against the same seed
+  (verify by diffing two consecutive runs into scratch dirs).
+
+  Usage: `clojure -M:dev:render-html [out-file]`
+  (default `docs/samples/operator-console.html`)."
+  (:require [jp-go-dds.skin]
+            [clojure.string :as str]
+            [learning.facts :as facts]
+            [learning.registry :as registry]
+            [learning.phase :as phase]
+            [learning.governor :as governor]
+            [learning.store :as store]
+            [learning.operation :as op]
+            [langgraph.graph :as g]))
+
+(def ^:private operator
+  "Same operator context this repo's own `learning.sim` uses."
+  {:actor-id "op-1" :actor-role :learning-coordinator :phase 3})
+
+;; ----------------------------- driving the real actor -----------------------------
+
+(defn- exec!
+  "One supervised actor run. Returns the resulting graph state."
+  [actor tid request]
+  (:state (g/run* actor {:request request :context operator} {:thread-id tid})))
+
+(defn- resume-approve!
+  "Resume a run paused at `:request-approval` with a human approval.
+  The resumed state carries the FULL accumulated `:audit` (the channel
+  reducer is `into` and the checkpointer replays), so the returned map
+  is the complete record of the request."
+  [actor tid]
+  (:state (g/run* actor {:approval {:status :approved :by "op-1"}}
+                  {:thread-id tid :resume? true})))
+
+(defn- request!
+  "Run one request, approving it if (and only if) the actor actually
+  paused for a human. Whether it pauses is the actor's decision, not
+  ours -- we never force an approval onto a run that HARD-held."
+  [actor runs tid request]
+  (let [st (exec! actor tid request)
+        st (if (= :escalate (:disposition st))
+             (resume-approve! actor tid)
+             st)]
+    (swap! runs conj {:tid tid :request request :state st})
+    st))
+
+(defn run-demo!
+  "Drives a freshly seeded store through a scenario that reaches every
+  disposition this actor can produce.
+
+  learner-1 (JPN, cohort 8:1 -- within the 12:1 tutor-load ceiling, no
+  unresolved dropout risk) clears a full lifecycle: intake (auto-commit,
+  phase-3 clean, no capital risk), study-plan verification (phase-gated
+  -> human approval), dropout-risk screening (approved), support-plan
+  finalization (ALWAYS escalates -- permanently high-stakes, never auto
+  at any phase -- approved) and guardian contact (same posture,
+  approved).
+
+  Then five HARD holds, each firing a DIFFERENT governor rule, none of
+  which ever reaches a human:
+    learner-2  :no-spec-basis                        -- jurisdiction ATL is deliberately absent from `learning.facts/catalog`
+    learner-3  :learner-to-tutor-ratio-exceeds-maximum -- cohort 15:1 exceeds the 12:1 ceiling, recomputed independently
+    learner-4  :dropout-risk-unresolved              -- the screening op HARD-holds on its own finding
+    learner-1  :already-plan-finalized               -- double support-plan finalization
+    learner-1  :already-guardian-contacted           -- double guardian contact
+
+  Returns {:db store :runs [..]} -- every field the page renders is read
+  back from these, never hand-typed."
+  []
+  (let [db (store/seed-db)
+        actor (op/build db)
+        runs (atom [])
+        r! (partial request! actor runs)]
+    ;; -- learner-1: the full clean lifecycle --
+    (r! "t01-intake"    {:op :learner/intake :subject "learner-1"
+                         :patch {:id "learner-1" :learner-name "Sato Yui"}})
+    (r! "t02-studyplan" {:op :studyplan/verify :subject "learner-1"})
+    (r! "t03-dropout"   {:op :dropout-risk/screen :subject "learner-1"})
+    (r! "t04-plan"      {:op :actuation/finalize-support-plan :subject "learner-1"})
+    (r! "t05-guardian"  {:op :actuation/contact-guardian :subject "learner-1"})
+
+    ;; -- five distinct HARD holds --
+    (r! "t06-nospec"    {:op :studyplan/verify :subject "learner-2" :no-spec? true})
+    (r! "t07-studyplan" {:op :studyplan/verify :subject "learner-3"})
+    (r! "t08-ratio"     {:op :actuation/finalize-support-plan :subject "learner-3"})
+    (r! "t09-dropout"   {:op :dropout-risk/screen :subject "learner-4"})
+    (r! "t10-replan"    {:op :actuation/finalize-support-plan :subject "learner-1"})
+    (r! "t11-reguard"   {:op :actuation/contact-guardian :subject "learner-1"})
+    {:db db :runs @runs}))
+
+;; ----------------------------- derivation helpers -----------------------------
+
+(defn- esc [v]
+  (-> (str v)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn- kw-str [k] (if (keyword? k) (name k) (str k)))
+
+(defn- holds
+  "Every HARD `:governor-hold` fact actually on the append-only ledger."
+  [db]
+  (filterv #(= :governor-hold (:t %)) (store/ledger db)))
+
+(defn- fact-of [audit t]
+  (last (filter #(= t (:t %)) audit)))
+
+(defn- last-ledger-fact [ledger learner-id]
+  (last (filter #(= learner-id (:subject %)) ledger)))
+
+;; -- approver attribution, DERIVED at render time --------------------------------
+;;
+;; `operation`'s `:request-approval` node attaches the human approver at
+;; `[:payload :approved-by]` on the commit record. Whether that survives
+;; into the SSoT is a property of `store/commit-record!`, which differs
+;; per effect -- so this page must NOT assume either outcome. We walk the
+;; registers the run actually wrote and ask whether an approver key is
+;; genuinely present. If the store is later changed to retain (or drop)
+;; attribution, this table re-measures and the page self-corrects.
+
+(def ^:private approver-key-names
+  #{"approved-by" "approved_by" "approver" "approved-by-id" "approved_by_id"})
+
+(defn- approver-key? [k]
+  (contains? approver-key-names (str/lower-case (kw-str k))))
+
+(defn- approver-in? [m]
+  (boolean (and (map? m) (some approver-key? (keys m)))))
+
+(defn- registers
+  "The four SSoT registers this actor writes, each as
+  {:label .. :effect .. :entries [..]} -- read back through the Store
+  protocol after the run."
+  [db]
+  (let [ids (map :id (store/all-learners db))]
+    [{:label "study-plan evidence assessments"
+      :effect :studyplan/set
+      :entries (vec (keep #(store/studyplan-of db %) ids))}
+     {:label "dropout-risk screenings"
+      :effect :dropout-risk-screen/set
+      :entries (vec (keep #(store/dropout-risk-screen-of db %) ids))}
+     {:label "support-plan drafts"
+      :effect :learner/mark-plan-finalized
+      :entries (vec (store/support-plan-history db))}
+     {:label "guardian-contact drafts"
+      :effect :learner/mark-guardian-contacted
+      :entries (vec (store/guardian-contact-history db))}]))
+
+(defn- approver-attribution
+  "Honest, derived disclosure of where the human approver's id actually
+  ended up. Returns {:granted [..] :on-ledger? bool :registers [..]}."
+  [db runs]
+  {:granted (vec (sort (distinct (keep #(:by (fact-of (:audit (:state %)) :approval-granted))
+                                       runs))))
+   :on-ledger? (boolean (some #(= :approval-granted (:t %)) (store/ledger db)))
+   :registers (mapv (fn [{:keys [label effect entries]}]
+                      (let [n (count entries)
+                            k (count (filter approver-in? entries))]
+                        {:label label :effect effect :total n :with-approver k
+                         :retained? (and (pos? n) (= n k))}))
+                    (registers db))})
+
+;; ----------------------------- HTML building blocks -----------------------------
+
+(defn- row [& cells]
+  (str "        <tr>" (str/join (map #(str "<td>" % "</td>") cells)) "</tr>"))
+
+(defn- table [headers rows]
+  (str "    <table>\n"
+       "      <thead><tr>" (str/join (map #(str "<th>" (esc %) "</th>") headers)) "</tr></thead>\n"
+       "      <tbody>\n"
+       (str/join "\n" rows) "\n"
+       "      </tbody>\n"
+       "    </table>\n"))
+
+(defn- section [title note body]
+  (str "  <section class=\"card\">\n"
+       "    <h2>" (esc title) "</h2>\n"
+       (when note (str "    <p class=\"muted\">" note "</p>\n"))
+       body
+       "  </section>\n"))
+
+(defn- ok [s] (str "<span class=\"ok\">" s "</span>"))
+(defn- warn [s] (str "<span class=\"warn\">" s "</span>"))
+(defn- crit [s] (str "<span class=\"critical\">" s "</span>"))
+(defn- muted [s] (str "<span class=\"muted\">" s "</span>"))
+(defn- code [s] (str "<code>" (esc s) "</code>"))
+
+;; ----------------------------- sections -----------------------------
+
+(defn- status-cell [ledger learner-id]
+  (let [f (last-ledger-fact ledger learner-id)]
+    (cond
+      (nil? f) (muted "no activity")
+      (= :committed (:t f)) (ok "committed")
+      (= :governor-hold (:t f))
+      (crit (str "HARD hold &middot; " (esc (kw-str (-> f :violations first :rule)))))
+      :else (muted "in progress"))))
+
+(defn- ratio-cell
+  "The learner's own recorded cohort head-counts, and whether the ratio
+  is even CHECKABLE -- un-checkable is not the same as within limits
+  (`registry/learner-to-tutor-ratio-exceeds-maximum-checkable?`)."
+  [{:keys [cohort-learner-count cohort-tutor-count] :as l}]
+  (cond
+    (not (registry/learner-to-tutor-ratio-exceeds-maximum-checkable? l))
+    (crit "not recorded &middot; un-checkable")
+
+    (registry/learner-to-tutor-ratio-exceeds-maximum? l)
+    (crit (str (esc cohort-learner-count) ":" (esc cohort-tutor-count)
+               " &gt; " registry/maximum-tutor-load-ratio ":1"))
+
+    :else
+    (ok (str (esc cohort-learner-count) ":" (esc cohort-tutor-count)
+             " &le; " registry/maximum-tutor-load-ratio ":1"))))
+
+(defn- learner-rows [db ledger]
+  (for [{:keys [id learner-name jurisdiction dropout-risk-unresolved?
+                support-plan-finalized? guardian-contacted?
+                plan-number contact-number] :as l} (store/all-learners db)]
+    (row (code id)
+         (esc learner-name)
+         (if (facts/spec-basis jurisdiction)
+           (esc jurisdiction)
+           (crit (str (esc jurisdiction) " &middot; no spec-basis")))
+         (ratio-cell l)
+         (if dropout-risk-unresolved? (crit "unresolved") (ok "none recorded"))
+         (if support-plan-finalized? (ok (esc plan-number)) (muted "&mdash;"))
+         (if guardian-contacted? (ok (esc contact-number)) (muted "&mdash;"))
+         (status-cell ledger id))))
+
+(defn- outcome
+  "What actually happened to one request, read from its own accumulated
+  audit -- not assumed from the request shape."
+  [{:keys [state]}]
+  (let [audit (:audit state)
+        granted (fact-of audit :approval-granted)
+        requested (fact-of audit :approval-requested)
+        hold (fact-of audit :governor-hold)]
+    (cond
+      hold {:kind :hold :rule (-> hold :violations first :rule)
+            :detail (-> hold :violations first :detail)
+            :confidence (:confidence hold)}
+      granted {:kind :approved :reason (:reason requested) :by (:by granted)
+               :confidence (:confidence requested)}
+      requested {:kind :awaiting :reason (:reason requested)}
+      :else {:kind :auto :confidence (:confidence (fact-of audit :learningadvisor-proposal))})))
+
+(defn- outcome-cell [o]
+  (case (:kind o)
+    :hold (crit (str "HARD hold &middot; " (esc (kw-str (:rule o)))))
+    :approved (ok (str "escalated (" (esc (kw-str (:reason o)))
+                       ") &rarr; approved by " (esc (:by o))))
+    :awaiting (warn "awaiting human approval")
+    (ok "auto-commit (phase-3 clean)")))
+
+(defn- request-rows [runs]
+  (for [{:keys [request] :as r} runs
+        :let [o (outcome r)]]
+    (row (code (:tid r))
+         (code (str (:op request)))
+         (code (:subject request))
+         (outcome-cell o)
+         (if-let [c (:confidence o)] (esc c) (muted "&mdash;"))
+         (esc (or (:detail o) "")))))
+
+(defn- hold-rows [db]
+  (for [h (holds db)
+        v (:violations h)]
+    (row (crit (esc (kw-str (:rule v))))
+         (code (str (:op h)))
+         (code (:subject h))
+         (esc (:confidence h))
+         (esc (:detail v)))))
+
+(def ^:private op-order
+  [:learner/intake :studyplan/verify :dropout-risk/screen
+   :actuation/finalize-support-plan :actuation/contact-guardian])
+
+(defn- gate-rows
+  "DERIVED from `learning.phase/phases` and `learning.governor/high-stakes`
+  -- this table is read out of the code that enforces it, so it cannot
+  drift away from the actual gate."
+  []
+  (let [ph phase/default-phase
+        {:keys [writes auto]} (get phase/phases ph)
+        ops (concat (filter (set phase/write-ops) op-order)
+                    (sort (remove (set op-order) phase/write-ops)))]
+    (for [o ops]
+      (row (code (str o))
+           (cond
+             (not (contains? writes o)) (crit "disabled at this phase")
+             (contains? governor/high-stakes o)
+             (crit "ALWAYS human approval &middot; never auto at any phase")
+             (contains? auto o) (ok "auto-commit when governor-clean")
+             :else (warn "human approval &middot; not auto-eligible"))
+           (if (contains? governor/high-stakes o) (esc "yes") (muted "no"))))))
+
+(defn- jurisdiction-rows
+  "Every jurisdiction actually seeded in `learning.facts/catalog`, plus
+  each jurisdiction the run referenced that has NO entry -- reported as
+  uncovered rather than quietly omitted."
+  [db]
+  (let [used (distinct (map :jurisdiction (store/all-learners db)))
+        missing (remove facts/spec-basis used)]
+    (concat
+     (for [[iso3 {:keys [name owner-authority legal-basis provenance required-evidence]}]
+           (sort-by key facts/catalog)]
+       (row (code iso3)
+            (esc name)
+            (esc owner-authority)
+            (esc legal-basis)
+            (str (count required-evidence) " &middot; "
+                 (esc (str/join " / " required-evidence)))
+            (str "<a href=\"" (esc provenance) "\">source</a>")))
+     (for [iso3 (sort missing)]
+       (row (code iso3)
+            (crit "not in catalog")
+            (muted "&mdash;") (muted "&mdash;")
+            (crit "no spec-basis &mdash; governor HARD-holds any proposal on it")
+            (muted "&mdash;"))))))
+
+(defn- register-rows [db]
+  (for [{:keys [label effect entries]} (registers db)
+        :let [n (count entries)
+              k (count (filter approver-in? entries))]]
+    (row (esc label)
+         (code (str effect))
+         (esc n)
+         (if (zero? n)
+           (muted "&mdash;")
+           (if (= n k)
+             (ok (str k " / " n " retain approver"))
+             (warn (str k " / " n " retain approver")))))))
+
+(defn- register-entry-rows [db]
+  (concat
+   (for [r (store/support-plan-history db)]
+     (row (code (get r "record_id"))
+          (esc (get r "kind"))
+          (code (get r "learner_id"))
+          (esc (get r "jurisdiction"))
+          (if (get r "immutable") (ok "immutable") (warn "mutable"))))
+   (for [r (store/guardian-contact-history db)]
+     (row (code (get r "record_id"))
+          (esc (get r "kind"))
+          (code (get r "learner_id"))
+          (esc (get r "jurisdiction"))
+          (if (get r "immutable") (ok "immutable") (warn "mutable"))))))
+
+(defn- ledger-rows [db]
+  (for [f (store/ledger db)]
+    (row (esc (kw-str (:t f)))
+         (code (str (:op f)))
+         (code (:subject f))
+         (esc (:actor f))
+         (if (= :governor-hold (:t f))
+           (crit (esc (str/join ", " (map kw-str (:basis f)))))
+           (esc (str/join ", " (map str (:basis f)))))
+         (esc (:summary f)))))
+
+;; ----------------------------- document -----------------------------
+
+(defn render
+  "Renders the full operator-console document from a completed
+  `run-demo!` result."
+  [{:keys [db runs]}]
+  (let [ledger (vec (store/ledger db))
+        hs (holds db)
+        attr (approver-attribution db runs)
+        cov (facts/coverage)]
+    (str
+     "<!doctype html>\n"
+     "<html lang=\"en\"><head><meta charset=\"utf-8\">\n"
+     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+     "<title>cloud-itonami-isic-8569 &middot; community learning support</title>\n"
+     "<style>" (jp-go-dds.skin/dds+skin) "</style>\n"
+     "</head><body>\n"
+     "<header class=\"bar\">\n"
+     "  <h1>Community learning support (ISIC 85 &middot; learning) — Operator Console</h1>\n"
+     "  <span class=\"badge\">read-only sample · governor-gated · support-plan finalization &amp; guardian contact always human-approved</span>\n"
+     "</header>\n"
+     "<main>\n"
+
+     (section "Run summary"
+              (str "Build-time-generated from " (code "learning.store")
+                   " through the real actor (" (code "learning.operation")
+                   " &rarr; " (code "learning.governor") " &rarr; " (code "learning.store")
+                   ") by " (code "learning.render-html") " (" (code "clojure -M:dev:render-html")
+                   "). Deterministic — no clock, no randomness, no network.")
+              (table ["Requests" "Ledger facts" "HARD holds" "Distinct rules fired"
+                      "Support plans" "Guardian contacts" "Phase"]
+                     [(row (esc (count runs))
+                           (esc (count ledger))
+                           (crit (esc (count hs)))
+                           (esc (count (distinct (mapcat :basis hs))))
+                           (esc (count (store/support-plan-history db)))
+                           (esc (count (store/guardian-contact-history db)))
+                           (esc (str phase/default-phase " · "
+                                     (:label (get phase/phases phase/default-phase)))))]))
+
+     (section "Learner directory"
+              (str "Every learner seeded in " (code "learning.store/demo-data")
+                   ". The tutor-load ratio is recomputed here from the learner's own "
+                   "recorded cohort head-counts, the same ground-truth fields the governor "
+                   "uses — a cohort with no recorded counts reads as "
+                   (crit "un-checkable") ", never as within limits.")
+              (table ["Learner" "Name" "Jurisdiction" "Cohort ratio (learners:tutors)"
+                      "Dropout risk" "Support plan" "Guardian contact" "Last op"]
+                     (learner-rows db ledger)))
+
+     (section "Requests in this run"
+              (str "One row per supervised actor run. Whether a run paused for a human is "
+                   "the actor's decision, read back from its own accumulated audit — an "
+                   "approval is never forced onto a run that HARD-held.")
+              (table ["Thread" "Op" "Subject" "Outcome" "Confidence" "Governor detail"]
+                     (request-rows runs)))
+
+     (section "HARD holds (Learner Safety Governor)"
+              (str "Every row is a " (code ":governor-hold")
+                   " fact on the append-only ledger. HARD violations cannot be overridden — "
+                   "a human approver never sees these requests at all. "
+                   "Confidence floor " (code (str governor/confidence-floor))
+                   "; tutor-load ceiling " (code (str registry/maximum-tutor-load-ratio ":1")) ".")
+              (table ["Rule" "Op" "Subject" "Advisor confidence" "Detail"]
+                     (hold-rows db)))
+
+     (section "Action gate"
+              (str "Read directly out of " (code "learning.phase/phases")
+                   " and " (code "learning.governor/high-stakes")
+                   " at render time, so this table cannot drift from the gate that enforces it. "
+                   (code ":actuation/finalize-support-plan") " and "
+                   (code ":actuation/contact-guardian")
+                   " are absent from every phase's auto set — a permanent structural fact, "
+                   "not a rollout milestone still to come.")
+              (table ["Op" (str "Gate at phase " phase/default-phase) "High-stakes"]
+                     (gate-rows)))
+
+     (section "Jurisdiction spec-basis coverage"
+              (str "Coverage is reported honestly: " (esc (:covered cov)) " of "
+                   (esc (:requested cov))
+                   " requested jurisdictions have an official spec-basis. "
+                   "A jurisdiction absent from the catalog has NO spec-basis — the advisor "
+                   "must not invent one, and the governor HARD-holds if it tries.")
+              (table ["ISO3" "Jurisdiction" "Owner authority" "Legal basis" "Required evidence" "Provenance"]
+                     (jurisdiction-rows db)))
+
+     (section "Registers written by this run"
+              (str "Append-only book-of-record drafts. Every certificate this actor produces "
+                   "is " (code "draft-unsigned") " — signing is the learning-support "
+                   "operator's own act, not this actor's.")
+              (table ["Record" "Kind" "Learner" "Jurisdiction" "Mutability"]
+                     (register-entry-rows db)))
+
+     (section "Approver attribution (derived, not asserted)"
+              (str "The human approver reached the actor: "
+                   (if (seq (:granted attr))
+                     (ok (str "approved by " (esc (str/join ", " (:granted attr)))))
+                     (crit "no approval granted"))
+                   ". Where that id ends up in the SSoT differs per effect, so this table "
+                   "<strong>measures</strong> each register at render time rather than "
+                   "assuming. Where it is not retained, the approver is still recoverable "
+                   "from the run's " (code ":approval-granted") " audit fact "
+                   "<strong>(audit only — not retained in record)</strong>; that is a "
+                   "property of " (code "store/commit-record!") ", which regenerates "
+                   "support-plan and guardian-contact records from "
+                   (code "learning.registry") " fixed fields and so carries neither "
+                   (code ":value") " nor " (code ":payload") " through. "
+                   (code ":approval-granted") " on the ledger: "
+                   (if (:on-ledger? attr) (ok "yes") (warn "no — audit channel only")) ".")
+              (table ["Register" "Effect" "Entries" "Approver retained in record?"]
+                     (register-rows db)))
+
+     (section "Audit ledger (this run)"
+              (str "The complete append-only decision-fact log — every commit and every "
+                   "hold this scenario produced, in order.")
+              (table ["Fact" "Op" "Subject" "Actor" "Basis" "Summary"]
+                     (ledger-rows db)))
+
+     "</main>\n"
+     "<footer class=\"muted\">\n"
+     "  Generated by <code>learning.render-html</code> from the <code>learning.store</code> seed.\n"
+     "  Deterministic — no clock, no randomness, no network. No usage, revenue or\n"
+     "  performance metric is claimed anywhere on this page.\n"
+     "</footer>\n"
+     "</body></html>\n")))
+
+(defn -main [& args]
+  (let [out (or (first args) "docs/samples/operator-console.html")
+        {:keys [db runs] :as result} (run-demo!)
+        hs (holds db)
+        rules (distinct (mapcat :basis hs))]
+    ;; A console that shows no real HARD hold is not evidence of a
+    ;; governor. Make this a BUILD-TIME invariant, not a convention:
+    ;; if the scenario ever stops producing a hold, the build fails
+    ;; rather than quietly emitting a page that proves nothing.
+    (when (empty? hs)
+      (throw (ex-info (str "no :governor-hold fact on the ledger — refusing to write a "
+                           "console that shows no real hold")
+                      {:ledger-facts (count (store/ledger db))
+                       :requests (count runs)})))
+    ;; Evidence floor: the run must actually have exercised the actor.
+    (when (empty? runs)
+      (throw (ex-info "no actor runs — refusing to write an empty console" {})))
+    (let [f (java.io.File. ^String out)]
+      (when-let [p (.getParentFile f)] (.mkdirs p))
+      (spit f (render result)))
+    (println "wrote" out
+             (str "(" (count runs) " requests, "
+                  (count (store/ledger db)) " ledger facts, "
+                  (count hs) " HARD holds over "
+                  (count rules) " distinct rules: "
+                  (str/join ", " (map kw-str rules)) ")"))))
