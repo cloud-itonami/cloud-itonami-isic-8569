@@ -27,7 +27,7 @@
   Usage: `clojure -M:dev:render-html [out-file]`
   (default `docs/samples/operator-console.html`)."
   (:require [jp-go-dds.skin]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [learning.facts :as facts]
             [learning.registry :as registry]
             [learning.phase :as phase]
@@ -147,7 +147,7 @@
   #{"approved-by" "approved_by" "approver" "approved-by-id" "approved_by_id"})
 
 (defn- approver-key? [k]
-  (contains? approver-key-names (str/lower-case (kw-str k))))
+  (contains? approver-key-names (str/lower (kw-str k))))
 
 (defn- approver-in? [m]
   (boolean (and (map? m) (some approver-key? (keys m)))))

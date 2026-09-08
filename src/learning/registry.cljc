@@ -34,7 +34,7 @@
   support plan or contacting the guardian itself (that is `learning.
   operation`'s `:actuation/finalize-support-plan`/`:actuation/contact-
   guardian`, always human-gated -- see README `Actuation`)."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (defn- unsigned-certificate
   "Every certificate this actor produces is UNSIGNED -- signature is the
@@ -99,7 +99,7 @@
     (throw (ex-info "support-plan: jurisdiction required" {})))
   (when (< sequence 0)
     (throw (ex-info "support-plan: sequence must be >= 0" {})))
-  (let [plan-number (str (str/upper-case jurisdiction) "-PLN-" (zero-pad sequence 6))
+  (let [plan-number (str (str/upper jurisdiction) "-PLN-" (zero-pad sequence 6))
         record {"record_id" plan-number
                 "kind" "support-plan-draft"
                 "learner_id" learner-id
@@ -123,7 +123,7 @@
     (throw (ex-info "guardian-contact: jurisdiction required" {})))
   (when (< sequence 0)
     (throw (ex-info "guardian-contact: sequence must be >= 0" {})))
-  (let [contact-number (str (str/upper-case jurisdiction) "-GDN-" (zero-pad sequence 6))
+  (let [contact-number (str (str/upper jurisdiction) "-GDN-" (zero-pad sequence 6))
         record {"record_id" contact-number
                 "kind" "guardian-contact-draft"
                 "learner_id" learner-id

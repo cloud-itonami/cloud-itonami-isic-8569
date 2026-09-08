@@ -7,7 +7,7 @@
   properties that make it evidence are asserted here rather than left
   to a reviewer's eye."
   (:require [clojure.test :refer [deftest testing is]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [learning.render-html :as rh]
             [learning.store :as store]))
 
