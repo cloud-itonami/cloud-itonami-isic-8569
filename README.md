@@ -199,14 +199,14 @@ the generic robotics/identity/forms/dmn/bpmn/audit-ledger stack only
 
 | File | Role |
 |---|---|
-| `src/learning/store.cljc` | **Store** protocol -- `MemStore` ‖ `DatomicStore` (`langchain.db`) + append-only audit ledger + separate support-plan/guardian-contact history. No dynamically-filed sub-record -- both actuation ops act directly on a pre-seeded learner, and the double-actuation guards check dedicated `:support-plan-finalized?`/`:guardian-contacted?` booleans rather than a `:status` value |
-| `src/learning/registry.cljc` | Support-plan + guardian-contact draft records, plus `learner-to-tutor-ratio-exceeds-maximum?` -- the FIFTH instance of this fleet's ratio-based sufficiency check family (`leasing`/`behavioral`/`union`/`fab` established the first four), applying the MAXIMUM-ceiling direction |
-| `src/learning/facts.cljc` | Per-jurisdiction educational-support/student-data-privacy catalog with an official spec-basis citation per entry, honest coverage reporting |
-| `src/learning/learningadvisor.cljc` | **LearningOps-LLM** -- `mock-advisor` ‖ `llm-advisor`; intake/study-plan-verification/dropout-risk-screening/support-plan-finalization/guardian-contact proposals |
-| `src/learning/governor.cljc` | **Learner Safety Governor** -- 4 HARD checks (spec-basis · evidence-incomplete · learner-to-tutor-ratio-exceeds-maximum, pure ground-truth ceiling recompute · dropout-risk-unresolved, unconditional evaluation, the THIRTY-SIXTH grounding of this discipline, a genuinely new concept grounded in this blueprint's own `:dropout-prevention` social-impact tag) + already-plan-finalized/already-guardian-contacted guards + 1 soft (confidence/actuation gate) |
-| `src/learning/phase.cljc` | **Phase 0→3** -- read-only → assisted intake → assisted verify → supervised (both support-plan finalization and guardian contact always human; learner intake is the ONLY auto-eligible op, no direct capital risk) |
-| `src/learning/operation.cljc` | **OperationActor** -- langgraph-clj StateGraph |
-| `src/learning/sim.cljc` | demo driver |
+| `src/learning/store.kotoba` | **Store** protocol -- `MemStore` ‖ `DatomicStore` (`langchain.db`) + append-only audit ledger + separate support-plan/guardian-contact history. No dynamically-filed sub-record -- both actuation ops act directly on a pre-seeded learner, and the double-actuation guards check dedicated `:support-plan-finalized?`/`:guardian-contacted?` booleans rather than a `:status` value |
+| `src/learning/registry.kotoba` | Support-plan + guardian-contact draft records, plus `learner-to-tutor-ratio-exceeds-maximum?` -- the FIFTH instance of this fleet's ratio-based sufficiency check family (`leasing`/`behavioral`/`union`/`fab` established the first four), applying the MAXIMUM-ceiling direction |
+| `src/learning/facts.kotoba` | Per-jurisdiction educational-support/student-data-privacy catalog with an official spec-basis citation per entry, honest coverage reporting |
+| `src/learning/learningadvisor.kotoba` | **LearningOps-LLM** -- `mock-advisor` ‖ `llm-advisor`; intake/study-plan-verification/dropout-risk-screening/support-plan-finalization/guardian-contact proposals |
+| `src/learning/governor.kotoba` | **Learner Safety Governor** -- 4 HARD checks (spec-basis · evidence-incomplete · learner-to-tutor-ratio-exceeds-maximum, pure ground-truth ceiling recompute · dropout-risk-unresolved, unconditional evaluation, the THIRTY-SIXTH grounding of this discipline, a genuinely new concept grounded in this blueprint's own `:dropout-prevention` social-impact tag) + already-plan-finalized/already-guardian-contacted guards + 1 soft (confidence/actuation gate) |
+| `src/learning/phase.kotoba` | **Phase 0→3** -- read-only → assisted intake → assisted verify → supervised (both support-plan finalization and guardian contact always human; learner intake is the ONLY auto-eligible op, no direct capital risk) |
+| `src/learning/operation.kotoba` | **OperationActor** -- langgraph-clj StateGraph |
+| `src/learning/sim.kotoba` | demo driver |
 | `test/learning/*_test.clj` | governor contract · phase invariants · store parity · registry conformance · facts coverage |
 
 ## Business-process coverage (honest)
