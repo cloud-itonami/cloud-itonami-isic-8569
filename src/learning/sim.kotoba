@@ -1,5 +1,5 @@
 (ns learning.sim
-  "Demo driver -- `clojure -M:dev:run`. Walks a clean learner through
+  "Demo driver -- `kbb -M:dev:run`. Walks a clean learner through
   intake -> study-plan verification -> dropout-risk screening ->
   support-plan-finalization proposal (always escalates) -> human
   approval -> commit, then through guardian-contact proposal (always
