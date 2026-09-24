@@ -1,0 +1,34 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:dev:physics` runs it.
+;;
+;; README "Robotics premise": a learning-support robot performs content
+;; delivery, assessment proctoring and assistive interaction with learners
+;; (ISIC 8569 context: learning support, including children and vulnerable
+;; learners). Its physical work: handing materials (books, tablets, kits) to a
+;; learner at a desk with its arm, and approaching a learner, where how far it
+;; rolls after deciding to stop is what keeps it off the child.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+;; Replacing an estimate with a sourced value is this bot's growth work.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isic-8569"
+ :cases
+ [{:id :hand-over-materials
+   :kind :manipulator
+   :procedure "arm lifts a learning kit from the robot's tray and holds it out to a learner seated at a desk"
+   :params {:l1-m 0.35 :l2-m 0.30 :m1-kg 2.5 :m2-kg 1.8
+            :from [0.20 0.10] :to [0.55 0.25] :duration-s 2.0 :steps 400}
+   :sweep {:param :payload-kg :values [0.3 0.6 1.0 1.5 2.5]}
+   :quantity :peak-tau1-nm
+   :limit {:max 20.0 :basis "estimate: continuous shoulder torque of a 3 kg-class service arm kept low for work beside children"}
+   :boundary {:lo 0.1 :hi 10.0}}
+  {:id :approach-learner-stop
+   :kind :transport
+   :procedure "robot approaches a learner's desk and brakes to a stop when the learner moves toward it"
+   :params {:mass-kg 30.0 :payload-kg 2.0 :distance-m 8.0 :a-max-mps2 0.4
+            :brake-decel-mps2 1.0 :drive-force-n 120.0 :crr 0.015
+            :cog-height-m 0.50 :support-half-length-m 0.20 :max-time-s 1000.0}
+   :sweep {:param :v-max-mps :values [0.3 0.5 0.7 0.9 1.1]}
+   :quantity :stopping-distance-m
+   :limit {:max 0.20 :basis "estimate: close-approach speed kept so the robot stops within 0.2 m of detection next to a seated child"}
+   :boundary {:lo 0.1 :hi 2.0}}]}
