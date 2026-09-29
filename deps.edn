@@ -6,7 +6,7 @@
  ;; inside the monorepo checkout — a standalone fork should override them
  ;; with git coordinates.
  ;; `jp-go-digital-design-system` (DADS) is this workspace's BASE design
- ;; system (CLAUDE.md "UI/UX 標準"). It is consumed as a :git/sha, NOT a
+ ;; system (AGENTS.md "UI/UX 標準"). It is consumed as a :git/sha, NOT a
  ;; :local/root, so a standalone fork outside the monorepo still resolves
  ;; it. Only `learning.render-html` uses it, and only at build time to
  ;; emit docs/samples/operator-console.html -- the actor itself has no
